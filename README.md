@@ -1,1 +1,1 @@
-# Wine MLOps Pipeline - Version A
+# Wine MLOps Pipeline
