@@ -14,33 +14,39 @@ MODEL_ALIAS = "champion"
 
 def evaluate_champion():
     """Evaluate the registered champion model on the held-out test set."""
-
-    # Connect to the same MLflow tracking database
     mlflow.set_tracking_uri(TRACKING_URI)
 
-    # Load the original train/test split
-    X_train, X_test, y_train, y_test = load_wine_data()
+    _, X_test, _, y_test = load_wine_data()
 
-    # Load the model registered with the champion alias
     model_uri = f"models:/{REGISTERED_MODEL_NAME}@{MODEL_ALIAS}"
 
     print("Loading registered champion model...")
     model = mlflow.sklearn.load_model(model_uri)
 
-    # Warm-up prediction so model-loading overhead is not included
-    model.predict(X_test)
+    # Warm up the model before measuring inference latency.
+    for _ in range(5):
+        model.predict(X_test)
 
-    # Measure batch inference latency
+    # Measure average batch inference latency.
+    repetitions = 30
+
     start_time = time.perf_counter()
 
-    predictions = model.predict(X_test)
-    probabilities = model.predict_proba(X_test)
+    predictions = None
+
+    for _ in range(repetitions):
+        predictions = model.predict(X_test)
 
     elapsed_time = time.perf_counter() - start_time
-    latency_ms = elapsed_time * 1000
 
-    # Calculate final test metrics
-    accuracy = accuracy_score(y_test, predictions)
+    latency_ms = (elapsed_time / repetitions) * 1000
+
+    probabilities = model.predict_proba(X_test)
+
+    accuracy = accuracy_score(
+        y_test,
+        predictions,
+    )
 
     macro_f1 = f1_score(
         y_test,
@@ -53,10 +59,8 @@ def evaluate_champion():
         probabilities,
     )
 
-    # Get the unique predicted classes
     predicted_classes = sorted(set(predictions))
 
-    # Display results
     print("\n========================================")
     print("FINAL CHAMPION MODEL EVALUATION")
     print("========================================")
@@ -71,10 +75,9 @@ def evaluate_champion():
 
     print("\nInference:")
     print(f"Batch size: {len(X_test)}")
-    print(f"Batch inference latency: {latency_ms:.2f} ms")
+    print(f"Average batch inference latency: {latency_ms:.2f} ms")
     print(f"Predicted classes: {predicted_classes}")
 
-    # Quality gate checks
     print("\n========================================")
     print("QUALITY GATE")
     print("========================================")
@@ -83,20 +86,9 @@ def evaluate_champion():
     latency_pass = latency_ms <= 30
     classes_pass = set(predicted_classes).issubset({0, 1, 2})
 
-    print(
-        f"Macro F1 >= 0.88: "
-        f"{'PASS' if f1_pass else 'FAIL'}"
-    )
-
-    print(
-        f"Batch inference <= 30 ms: "
-        f"{'PASS' if latency_pass else 'FAIL'}"
-    )
-
-    print(
-        f"Classes only 0/1/2: "
-        f"{'PASS' if classes_pass else 'FAIL'}"
-    )
+    print(f"Macro F1 >= 0.88: {'PASS' if f1_pass else 'FAIL'}")
+    print(f"Batch inference <= 30 ms: {'PASS' if latency_pass else 'FAIL'}")
+    print(f"Classes only 0/1/2: {'PASS' if classes_pass else 'FAIL'}")
 
     if not (f1_pass and latency_pass and classes_pass):
         raise AssertionError("Model quality gate failed.")
